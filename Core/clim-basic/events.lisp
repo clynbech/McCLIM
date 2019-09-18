@@ -31,7 +31,7 @@
 ;;
 ;; Class hierarchy as in CLIM:
 ;;
-;;   event
+;;   standard-event
 ;;     device-event
 ;;       keyboard-event
 ;;         key-press-event
@@ -55,6 +55,7 @@
 ;;       window-manager-delete-event
 ;;       window-manager-focus-event
 ;;     timer-event
+;;     lambda-event
 ;;
 
 (defvar *last-timestamp* 0)
@@ -261,6 +262,9 @@
   ((token
     :initarg :token
     :reader  event-token)))
+
+(define-event-class lambda-event (standard-event)
+  ((thunk :initarg :thunk :reader event-thunk)))
 
 ;;; Constants dealing with events
 
