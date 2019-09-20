@@ -31,7 +31,7 @@
 ;;
 ;; Class hierarchy as in CLIM:
 ;;
-;;   standard-event
+;;   event
 ;;     device-event
 ;;       keyboard-event
 ;;         key-press-event
@@ -265,6 +265,13 @@
 
 (define-event-class lambda-event (standard-event)
   ((thunk :initarg :thunk :reader event-thunk)))
+
+;; now from the clim loop, when event is read
+;; (here since events.lisp comes after sheets.lisp)
+(defmethod handle-event ((stream thread-safe-mixin) (event lambda-event))
+  (funcall (event-thunk event)))
+
+
 
 ;;; Constants dealing with events
 

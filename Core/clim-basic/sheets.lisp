@@ -795,16 +795,7 @@ might be different from the sheet's native region."
 ;;; Queuing support
 
 (defclass thread-safe-mixin ()
-  ((thread :initarg :thread)))
-
-(defmethod draw-rectangle* :around ((s thread-safe-stream-mixin) …)
-  (if (eql (current-thread) (stream-thread s))
-    (call-next-method)
-    (queue-event (make-instance 'lambda-event :fun (lambda () (draw-rectangle* s …)))))
-
-;; now from the clim loop, when event is read
-(defmethod handle-event ((stream thread-safe-stream-mixin) (event lambda-event))
-  (funcall fun))
+  ((thread :initarg :thread :reader sheet-thread)))
 
 
 

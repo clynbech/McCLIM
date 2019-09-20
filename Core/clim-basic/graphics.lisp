@@ -84,6 +84,16 @@
   (when sheet
     (funcall func sheet)))
 
+(defmethod do-graphics-with-options :around ((sheet thread-safe-mixin)
+                                             func &rest options)
+  (if (eql (bordeaux-threads:current-thread) (sheet-thread sheet))
+    (call-next-method)
+    (queue-event sheet (make-instance 'lambda-event
+                                      :thunk (lambda ()
+                                               (apply #'do-graphics-with-options
+                                                      sheet func options))))))
+
+
 (defmethod do-graphics-with-options ((pixmap pixmap) func &rest options)
   (with-pixmap-medium (medium pixmap)
     (apply #'do-graphics-with-options-internal medium medium func options)))

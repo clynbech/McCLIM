@@ -27,7 +27,10 @@
 ;;;       happens to be an output-recording-stream. - MikeMac 1/7/99
 
 ;;; Standard-Output-Stream class
-(defclass standard-output-stream (output-stream text-selection-mixin) ())
+(defclass standard-output-stream (output-stream
+                                  text-selection-mixin
+                                  thread-safe-mixin)
+  ())
 
 (defmethod stream-recording-p ((stream output-stream)) nil)
 (defmethod stream-drawing-p ((stream output-stream)) t)
