@@ -59,7 +59,8 @@
 
 (defmethod make-object-state ((object integer) (place t))
   (make-instance (object-state-class object place)
-                 :prime-factors-p (<= (abs object) (expt 2 32))))
+                 :place           place
+                 :prime-factors-p (< (abs object) (ash 1 32))))
 
 ;;; Object inspection methods
 

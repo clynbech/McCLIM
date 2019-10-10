@@ -1019,10 +1019,12 @@ which changed during the current execution of CHANGING-SPACE-REQUIREMENTS.
   ;;
   ;; --GB 2003-03-16
   (declare (ignore space-req-keys resize-frame))
-  (let ((w (space-requirement-width (compose-space pane)))
-        (h (space-requirement-height (compose-space pane))))
-    (resize-sheet pane w h)
-    (allocate-space pane w h) ))
+
+  (let* ((space-requirements (compose-space pane))
+         (width (space-requirement-width space-requirements))
+         (height (space-requirement-height space-requirements)))
+    (resize-sheet pane width height)
+    (allocate-space pane width height)))
 
 ;;; Now each child (client) of a box-layout pane is described by the
 ;;; following class:
@@ -1378,8 +1380,6 @@ which changed during the current execution of CHANGING-SPACE-REQUIREMENTS.
 
 (defmethod initialize-instance :after ((pane box-pane) &key contents)
   (setf (%pane-contents pane) contents))
-
-(defgeneric %pane-contests (pane contents))
 
 (defmethod (setf %pane-contents) (contents (pane box-pane))
   (labels ((parse-box-content (content)
@@ -2754,10 +2754,25 @@ SCROLLER-PANE appear on the ergonomic left hand side, or leave set to
 ;;; TITLE PANE
 
 (defclass title-pane (clim-stream-pane)
-  ()
+  ((title :initarg :title-string
+	  :accessor title-string))
   (:default-initargs :display-time t
+		     :title-string "Default Title"
                      :scroll-bars nil
+		     :text-style (make-text-style :serif :bold :very-large)
                      :display-function 'display-title))
+
+(defmethod display-title (frame (pane title-pane))
+  (declare (ignore frame))
+  (let* ((title-string (title-string pane))
+	 (a (text-style-ascent (pane-text-style pane) pane))
+	 (tw (text-size pane title-string)))
+    (with-bounding-rectangle* (x1 y1 x2 y2) (sheet-region pane)
+      (declare (ignore y2))
+      (multiple-value-bind (tx ty)
+	  (values (- (/ (- x2 x1) 2) (/ tw 2))
+		  (+ y1 2 a))
+	(draw-text* pane title-string tx ty)))))
 
 ;;; Pointer Documentation Pane
 

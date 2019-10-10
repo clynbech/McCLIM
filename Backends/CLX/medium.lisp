@@ -406,10 +406,19 @@ translated, so they begin at different position than [0,0])."))
       (push #'(lambda () (xlib:free-pixmap mm)) ^cleanup)
       mm)))
 
+
+;;; The purpose of this is to reduce local network traffic for the case of many
+;;; calls to compute-rgb-image, for example when drawing a pattern.
+;;; For more details, see also: https://github.com/sharplispers/clx/pull/146
+(defun cached-drawable-depth (drawable)
+  (or (getf (xlib:drawable-plist drawable) :clim-cache)
+      (setf (getf (xlib:drawable-plist drawable) :clim-cache)
+            (xlib:drawable-depth drawable))))
+
 (defun compute-rgb-image (drawable image)
   (let* ((width (pattern-width image))
          (height (pattern-height image))
-         (depth (xlib:drawable-depth drawable))
+         (depth (cached-drawable-depth drawable))
          (idata (climi::pattern-array image)))
     (let* ((pm (xlib:create-pixmap :drawable drawable
                                    :width width
@@ -634,11 +643,10 @@ translated, so they begin at different position than [0,0])."))
                                            (min #x7FFF (max #x-8000 (round-coordinate x2)))
                                            (min #x7FFF (max #x-8000 (round-coordinate y2))))))))))))))))
 
-;; Invert the transformation and apply it here, as the :around methods on
-;; transform-coordinates-mixin will cause it to be applied twice, and we
-;; need to undo one of those. The transform-coordinates-mixin stuff needs
-;; to be eliminated.
 (defmethod medium-draw-lines* ((medium clx-medium) coord-seq)
+  ;; Invert the transformation and apply it here, as the :around
+  ;; methods on transform-coordinates-mixin will cause it to be
+  ;; applied twice, and we need to undo one of those.
   (let ((tr (invert-transformation (medium-transformation medium))))
     (with-transformed-positions (tr coord-seq)
       (do-sequence ((x1 y1 x2 y2) coord-seq)
@@ -921,18 +929,6 @@ translated, so they begin at different position than [0,0])."))
 
 (defmethod (setf medium-buffering-output-p) (buffer-p (medium clx-medium))
   buffer-p)
-
-(defmethod medium-draw-glyph ((medium clx-medium) element x y
-                              align-x align-y toward-x toward-y
-                              transform-glyphs)
-  (declare (ignore toward-x toward-y transform-glyphs align-x align-y))
-  (with-transformed-position ((clim:compose-transformations
-                               (sheet-native-transformation (medium-sheet medium))
-                               (medium-transformation medium))
-                              x y)
-    (with-clx-graphics () medium
-      (xlib:draw-glyph mirror gc (round-coordinate x) (round-coordinate y)
-                       element :size 16 :translate #'translate))))
 
 
 ;;; Other Medium-specific Output Functions
