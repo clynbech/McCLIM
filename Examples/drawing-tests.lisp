@@ -40,6 +40,7 @@
    (current-selection :initform nil)
    (application-frame-backend :initform :clx-ttf)
    (frames :initform (make-hash-table)))
+  (:menu-bar nil)
   (:panes
    (category-test-pane
     (horizontally (:equalize-height t)
@@ -1800,7 +1801,7 @@ outside the clipping area should be grey.")
                    :text-family :sans-serif
                    :text-face :bold)
   (clim:formatting-table (stream)
-    (flet ((draw (angle line-joint-shape)
+    (flet ((draw (stream angle line-joint-shape)
              (let ((record
                     (clim:with-output-to-output-record (stream)
                       (let ((v (* 50 (tan angle))))
@@ -1830,9 +1831,9 @@ outside the clipping area should be grey.")
          unless (= i 0)
          do (clim:formatting-row (stream)
               (clim:formatting-cell (stream) (print (* i dag) stream))
-              (clim:formatting-cell (stream) (draw a :miter))
-              (clim:formatting-cell (stream) (draw a :bevel))
-              (clim:formatting-cell (stream) (draw a :round)))))))
+              (clim:formatting-cell (stream) (draw stream a :miter))
+              (clim:formatting-cell (stream) (draw stream a :bevel))
+              (clim:formatting-cell (stream) (draw stream a :round)))))))
 
 (define-drawing-test "Table" "dashes" (frame stream)
     ""

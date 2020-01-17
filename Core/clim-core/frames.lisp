@@ -252,6 +252,9 @@ documentation produced by presentations.")
   ;; Let client code know.
   (clime:note-frame-pretty-name-changed (frame-manager frame) frame new-value))
 
+(defmethod frame-all-layouts ((frame application-frame))
+  (mapcar #'car (frame-layouts frame)))
+
 (define-condition frame-layout-changed (condition)
   ((frame :initarg :frame :reader frame-layout-changed-frame)))
 
@@ -725,37 +728,46 @@ documentation produced by presentations.")
 ;
 ; FIXME
 
+(defun update-frame-pane-lists (frame)
+  (let ((all-panes     (frame-panes frame))
+        (named-panes   (mapcar #'cdr (frame-panes-for-layout frame)))
+        (current-panes '()))
+    ;; Find intersection of named panes and current layout panes.
+    (map-over-sheets (lambda (sheet)
+                       (when-let ((index (position sheet named-panes)))
+                         (push (cons sheet index) current-panes)))
+                     all-panes)
+    (setf current-panes (mapcar #'car (sort current-panes #'< :key #'cdr)))
+    ;; Populate current-pane list and special pane slots.
+    (let ((interactor            (find-pane-of-type current-panes 'interactor-pane))
+          (application           (find-pane-of-type current-panes 'application-pane))
+          (pointer-documentation (find-pane-of-type all-panes 'pointer-documentation-pane)))
+      (setf (frame-current-panes frame) current-panes
+            (frame-standard-output frame) (or application interactor)
+            (frame-standard-input frame) (or interactor (frame-standard-output frame))
+            (frame-pointer-documentation-output frame) pointer-documentation))))
+
 (defun coerce-pane-name (pane name)
   (setf (slot-value pane 'name) name)
   pane)
 
-(defun do-pane-creation-form (name form)
-  (cond
-    ;; Single form which is a function call
-    ((and (= (length form) 1)
-          (listp (first form)))
-     `(coerce-pane-name ,(first form) ',name))
-    ;; Standard pane denoted by a keyword (i.e `:application')
-    ((keywordp (first form))
-     (case (first form)
-       (:application `(make-clim-application-pane
-                       :name ',name
-                       ,@(cdr form)))
-       (:interactor `(make-clim-interactor-pane
-                      :name ',name ,@(cdr form)
-                      ,@(cdr form)))
-       (:pointer-documentation `(make-clim-pointer-documentation-pane
-                                 :name ',name
-                                 ,@(cdr form)))
-       (:command-menu `(make-clim-command-menu-pane
-                                :name ',name
-                                ,@(cdr form)))
-       (otherwise `(make-pane ,(first form) :name ',name ,@(cdr form)))))
-    ;; Non-standard pane designator fed to the `make-pane'
-    (t `(make-pane ',(first form) :name ',name ,@(cdr form)))))
+(defun generate-pane-creation-form (name form)
+  (destructuring-bind (pane &rest options) form
+    (cond ((and (null options) (listp pane)) ; Single form which is a function call
+           `(coerce-pane-name ,pane ',name))
+          ((eq pane :application) ; Standard pane denoted by a keyword (i.e `:application')
+           `(make-clim-application-pane :name ',name ,@options))
+          ((eq pane :interactor)
+           `(make-clim-interactor-pane :name ',name ,@options))
+          ((eq pane :pointer-documentation)
+           `(make-clim-pointer-documentation-pane :name ',name ,@options))
+          ((eq pane :command-menu)
+           `(make-clim-command-menu-pane :name ',name ,@options))
+          (t ; Non-standard pane designator fed to the `make-pane'
+           `(make-pane ',pane :name ',name ,@options)))))
 
-(defun make-panes-generate-panes-form (class-name menu-bar panes layouts
-                                       pointer-documentation)
+(defun generate-generate-panes-form (class-name menu-bar panes layouts
+                                 pointer-documentation)
   (when pointer-documentation
     (setf panes (append panes
                         '((%pointer-documentation%
@@ -766,170 +778,164 @@ documentation produced by presentations.")
          (unless (frame-panes-for-layout frame)
            (setf (frame-panes-for-layout frame)
                  (list
-                  ,@(loop
-                       for (name . form) in panes
-                       collect
-                         `(cons ',name ,(do-pane-creation-form name form))))))
-         (let ,(loop
-                  for (name . form) in panes
-                  collect `(,name (alexandria:assoc-value
-                                   (frame-panes-for-layout frame)
-                                   ',name :test #'eq)))
+                  ,@(loop for (name . form) in panes
+                          collect `(cons ',name ,(generate-pane-creation-form
+                                                  name form))))))
+         (let ,(loop for (name . form) in panes
+                     collect `(,name (alexandria:assoc-value
+                                      (frame-panes-for-layout frame)
+                                      ',name :test #'eq)))
            ;; [BTS] added this, but is not sure that this is correct for
            ;; adding a menu-bar transparently, should also only be done
            ;; where the exterior window system does not support menus
-           ,(if (or menu-bar pointer-documentation)
-                `(setf (frame-panes frame)
-                       (ecase (frame-current-layout frame)
-                         ,@(mapcar (lambda (layout)
-                                     `(,(first layout)
-                                        (vertically ()
-                                          ,@(cond
-                                              ((eq menu-bar t)
-                                               `((setf (frame-menu-bar-pane frame)
-                                                       (clim-internals::make-menu-bar
-                                                        ',class-name))))
-                                              ((consp menu-bar)
-                                               `((clim-internals::make-menu-bar
-                                                  (make-command-table
-                                                   nil
-                                                   :menu ',menu-bar))))
-                                              (menu-bar
-                                               `((clim-internals::make-menu-bar
-                                                  ',menu-bar)))
-                                              (t nil))
-                                          ,@(rest layout)
-                                          ,@(when pointer-documentation
-                                              '(%pointer-documentation%)))))
-                                   layouts)))
-                `(setf (frame-panes frame)
-                       (ecase (frame-current-layout frame)
-                         ,@layouts)))))
+           (setf (frame-panes frame)
+                 (ecase (frame-current-layout frame)
+                   ,@(if (or menu-bar pointer-documentation)
+                         (mapcar (lambda (layout)
+                                   `(,(first layout)
+                                     (vertically ()
+                                       ,@(cond
+                                           ((eq menu-bar t)
+                                            `((setf (frame-menu-bar-pane frame)
+                                                    (make-menu-bar ',class-name))))
+                                           ((consp menu-bar)
+                                            `((make-menu-bar
+                                               (make-command-table
+                                                nil :menu ',menu-bar))))
+                                           (menu-bar
+                                            `((make-menu-bar ',menu-bar)))
+                                           (t nil))
+                                       ,@(rest layout)
+                                       ,@(when pointer-documentation
+                                           '(%pointer-documentation%)))))
+                                 layouts)
+                         layouts)))))
+       ;; Update frame-current-panes and the special pane slots.
+       (update-frame-pane-lists frame))))
 
-       ;; XXX: this computation may be cached for each layout!
-       (let ((named-panes (mapcar #'cdr (frame-panes-for-layout frame)))
-             (panes nil))
-
-         ;; Find intersection of named panes and current layout panes
-         (map-over-sheets #'(lambda (p)
-                              (when (member p named-panes)
-                                (push p panes)))
-                          (frame-panes frame))
-
-         (setf (frame-current-panes frame)
-               (uiop:while-collecting (sorted-panes)
-                 (mapc #'(lambda (pane)
-                           (when (member pane panes)
-                             ;; collect pane
-                             (sorted-panes pane)
-                             ;; reduce search time
-                             (setf panes (delete pane panes))))
-                       named-panes)))
-
-         (setf (frame-standard-output frame)
-               (or (find-pane-of-type (frame-current-panes frame) 'application-pane)
-                   (find-pane-of-type (frame-current-panes frame) 'interactor-pane))
-
-               (frame-standard-input frame)
-               (or (find-pane-of-type (frame-current-panes frame) 'interactor-pane)
-                   (frame-standard-output frame))
-
-               (frame-pointer-documentation-output frame)
-               (find-pane-of-type (frame-panes frame) 'pointer-documentation-pane))))))
+(defun parse-define-application-frame-options (options)
+  (let ((infos '(;; CLIM
+                 (:pane                  * :conflicts (:panes :layouts))
+                 (:panes                 * :conflicts (:pane))
+                 (:layouts               * :conflicts (:pane))
+                 (:command-table         1)
+                 (:command-definer       1)
+                 (:menu-bar              ensure-1)
+                 (:disabled-commands     *)
+                 (:top-level             1)
+                 ;; :icon is the CLIM specification but we don't support it
+                 (:geometry              *)
+                 ;; :resize-frame is mentioned in a spec annotation but we don't support it
+                 ;; McCLIM extensions
+                 (:pointer-documentation 1)
+                 ;; Default initargs
+                 (:pretty-name           1)
+                 ;; Common Lisp
+                 (:default-initargs      *)))
+        (all-values '()))
+    (labels ((definedp (key)
+               (not (eq (getf all-values key 'undefined) 'undefined)))
+             (parse-option (key values)
+               (when-let ((info (find key infos :key #'first)))
+                 (destructuring-bind (name value-count &key conflicts) info
+                   (declare (ignore name))
+                   (cond ((when-let ((other (find-if #'definedp conflicts)))
+                            (error "~@<The options ~S and ~S are mutually ~
+                                    exclusive.~@:>"
+                                   key other)))
+                         ((definedp key)
+                          (error "~@<The option ~S cannot be supplied ~
+                                  multiple times.~@:>"
+                                 key))
+                         ;; Canonicalize :pane, :panes and :layouts to
+                         ;; just :panes and :layouts.
+                         ((eq key :pane)
+                          (setf (getf all-values :pane)
+                                t
+                                (getf all-values :panes)
+                                `((single-pane ,@values))
+                                (getf all-values :layouts)
+                                `((:default single-pane))))
+                         ((eq key :default-initargs)
+                          (destructuring-bind
+                              (&key ((:pretty-name user-pretty-name) nil pretty-name-p)
+                               &allow-other-keys)
+                              values
+                            (when pretty-name-p
+                              (parse-option :pretty-name (list user-pretty-name))))
+                          (setf (getf all-values :user-default-initargs)
+                                (alexandria:remove-from-plist values :pretty-name)))
+                         (t
+                          (setf (getf all-values key)
+                                (ecase value-count
+                                  (1        (first values))
+                                  (ensure-1 (alexandria:ensure-car values))
+                                  (*        values))))))
+                 t)))
+      (loop :for option :in options
+            :for (key . values) = option
+            :do (with-current-source-form (option)
+                  (when (not (parse-option key values))
+                    (push option (getf all-values :other-options)))))
+      (alexandria:remove-from-plist all-values :pane))))
 
 (defmacro define-application-frame (name superclasses slots &rest options)
   (when (null superclasses)
     (setq superclasses '(standard-application-frame)))
-  (let ((pretty-name (string-capitalize name))
-        (pane nil)
-        (panes nil)
-        (layouts nil)
-        (current-layout nil)
-        (command-table (list name))
-        (menu-bar t)
-        (disabled-commands nil)
-        (command-definer t)
-        (top-level '(default-frame-top-level))
-        (others nil)
-        (pointer-documentation nil)
-        (geometry nil)
-        (user-default-initargs nil)
-        (frame-arg (gensym "FRAME-ARG")))
-    (loop for (prop . values) in options
-        do (case prop
-             (:pane (setq pane values))
-             (:panes (setq panes values))
-             (:layouts (setq layouts values))
-             (:command-table (setq command-table (first values)))
-             (:menu-bar (setq menu-bar (if (listp values)
-                                           (first values)
-                                           values)))
-             (:disabled-commands (setq disabled-commands values))
-             (:command-definer (setq command-definer (first values)))
-             (:top-level (setq top-level (first values)))
-             (:pointer-documentation (setq pointer-documentation (car values)))
-             (:geometry (setq geometry values))
-             (:default-initargs
-              (destructuring-bind
-                  (&key ((:pretty-name user-pretty-name) nil pretty-name-p)
-                   &allow-other-keys)
-                  values
-                (when pretty-name-p
-                  (setf pretty-name user-pretty-name)))
-              (setf user-default-initargs
-                    (alexandria:remove-from-plist values :pretty-name)))
-             (t (push (cons prop values) others))))
+  (destructuring-bind (&key panes
+                            layouts
+                            (command-table (list name))
+                            (command-definer t)
+                            (menu-bar t)
+                            disabled-commands
+                            (top-level '(default-frame-top-level))
+                            geometry
+                            ;; McCLIM extensions
+                            pointer-documentation
+                            ;; Default initargs
+                            (pretty-name (string-capitalize name))
+                            ;; Common Lisp
+                            user-default-initargs
+                            other-options
+                            ;; Helpers
+                            (current-layout (first (first layouts)))
+                            (frame-arg (gensym "FRAME-ARG")))
+      (parse-define-application-frame-options options)
     (when (eq command-definer t)
       (setf command-definer
             (alexandria:symbolicate '#:define- name '#:-command)))
-    (when (or (and pane panes)
-              (and pane layouts))
-      (error ":pane cannot be specified along with either :panes or :layouts"))
-
-    (when pane
-      (setq panes `((single-pane ,@pane))
-            layouts `((:default single-pane))))
-
-    (setq current-layout (first (first layouts)))
     `(progn
-      (defclass ,name ,superclasses
-        ,slots
-        (:default-initargs
-         :name ',name
-         :pretty-name ,pretty-name
-         :command-table (find-command-table ',(first command-table))
-         :disabled-commands ',disabled-commands
-         :menu-bar ',menu-bar
-         :current-layout ',current-layout
-         :layouts ',layouts
-         :top-level (list ',(car top-level) ,@(cdr top-level))
-         :top-level-lambda (lambda (,frame-arg)
-                             (,(car top-level) ,frame-arg
-                               ,@(cdr top-level)))
-         ,@geometry
-         ,@user-default-initargs)
-        ,@others)
+       (defclass ,name ,superclasses
+         ,slots
+         (:default-initargs
+          :name              ',name
+          :pretty-name       ,pretty-name
+          :command-table     (find-command-table ',(first command-table))
+          :disabled-commands ',disabled-commands
+          :menu-bar          ',menu-bar
+          :current-layout    ',current-layout
+          :layouts           ',layouts
+          :top-level         (list ',(car top-level) ,@(cdr top-level))
+          :top-level-lambda  (lambda (,frame-arg)
+                               (,(car top-level) ,frame-arg
+                                ,@(cdr top-level)))
+          ,@geometry
+          ,@user-default-initargs)
+         ,@other-options)
 
-      (defmethod frame-all-layouts ((frame ,name))
-        ',(mapcar #'car layouts))
+       ,(generate-generate-panes-form
+         name menu-bar panes layouts pointer-documentation)
 
-      ,(make-panes-generate-panes-form name menu-bar panes layouts
-                                       pointer-documentation)
+       ,@(when command-table
+           `((define-command-table ,@command-table)))
 
-      ,@(when command-table
-          `((define-command-table ,@command-table)))
-
-      ,@(when command-definer
-          `((defmacro ,command-definer (name-and-options arguments &rest body)
-              (let ((name (if (listp name-and-options)
-                              (first name-and-options)
-                              name-and-options))
-                    (options (if (listp name-and-options)
-                                 (cdr name-and-options)
-                                 nil))
-                    (command-table ',(first command-table)))
-                `(define-command (,name :command-table ,command-table ,@options)
-                     ,arguments ,@body))))))))
+       ,@(when command-definer
+           `((defmacro ,command-definer (name-and-options arguments &rest body)
+               (destructuring-bind (name &rest options)
+                   (alexandria:ensure-list name-and-options)
+                 `(define-command (,name :command-table ,',(first command-table)
+                                         ,@options)
+                      ,arguments ,@body))))))))
 
 (defun make-application-frame (frame-name
                                &rest options
@@ -1317,7 +1323,7 @@ alive.")
             (%stream% stream)
             (%doc-state% frame-documentation-state)
             (%event% event))
-        (declare (special %input-context% %stream% %doc-state% %event&))
+        (declare (special %input-context% %stream% %doc-state% %event%))
         (if (and documentation-record
                  (output-record-parent documentation-record))
             (redisplay documentation-record *pointer-documentation-output*)
@@ -1366,7 +1372,36 @@ have a `pointer-documentation-pane' as pointer documentation,
 
 (defun frame-display-pointer-documentation-string (frame string)
   (with-output-to-pointer-documentation (stream frame)
-    (write-string string stream)))
+      (write-string string stream))
+  (let ((*pointer-documentation-output* (frame-pointer-documentation-output frame)))
+    ;; To see the string it is necessary to trigger the redisplay of
+    ;; pointer-documentation-pane with FRAME-UPDATE-POINTER-DOCUMENTATION.
+    ;; As INPUT-CONTEXT we pass NIL. FRAME-COMPUTE-POINTER-DOCUMENTATION-STATE and
+    ;; FRAME-PRINT-POINTER-DOCUMENTATION specialize on that.
+    ;; We pass the STRING as EVENT argument in this way
+    ;; FRAME-COMPUTE-POINTER-DOCUMENTATION-STATE calculate a new state
+    ;; value cached for icremental-redisplay machinery.  -- admich 2019-11-15
+    (frame-update-pointer-documentation frame nil nil string)))
+
+(defmethod frame-compute-pointer-documentation-state
+    ((frame standard-application-frame) (input-context null) stream event)
+  (list :string event))
+
+(defmethod frame-print-pointer-documentation
+    ((frame standard-application-frame) (input-context null) stream state event)
+  (unless state
+    (return-from frame-print-pointer-documentation nil))
+  (let ((pstream *pointer-documentation-output*))
+    (when-let ((message (background-message pstream)))
+      (cond ((record-on-display pstream message))
+            ((> (get-universal-time)
+                (+ (background-message-time pstream)
+                   *background-message-minimum-lifetime*))
+             (setf (background-message pstream) nil))
+            (t
+             (setf (output-record-parent message) nil)
+             (stream-add-output-record pstream message)
+             (replay message pstream))))))
 
 (defgeneric frame-input-context-track-pointer
     (frame input-context stream event))

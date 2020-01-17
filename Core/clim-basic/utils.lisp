@@ -10,13 +10,13 @@
 (defun get-environment-variable (string)
   #+excl (sys:getenv string)
   #+(or cmu scl) (cdr (assoc string ext:*environment-list* :test #'string=))
-  #+clisp (ext:getenv (string string))
+  #+(or clisp abcl) (ext:getenv (string string))
   #+sbcl (sb-ext::posix-getenv string)
   #+openmcl (ccl::getenv string)
   #+lispworks (lw:environment-variable string)
   #+ecl (ext:getenv string)
   #+clasp (ext:getenv string)
-  #-(or ecl excl cmu scl clisp sbcl openmcl lispworks clasp)
+  #-(or abcl ecl excl cmu scl clisp sbcl openmcl lispworks clasp)
   (error "GET-ENVIRONMENT-VARIABLE not implemented"))
 
 ;;; It would be nice to define this macro in terms of letf, but that
@@ -465,6 +465,24 @@ in KEYWORDS removed."
                ,@body))
       (declare (dynamic-extent #',cont))
       (,fun ,@to-bind #',cont ,@to-pass))))
+
+;;; Macro writing
+
+;;; This is a utility which is intended to be used by macro writers to
+;;; help application programmers. It allows the CL implementation to
+;;; associate conditions signaled during macroexpansion with sub-forms
+;;; of the whole macro form. In practice this means tools like SLIME
+;;; will highlight that sub-form when reporting the error. This macro
+;;; is most useful in complex macros such as
+;;; `define-application-frame'.
+(defmacro with-current-source-form ((form &rest more-forms) &body body)
+  "Associate errors signaled while executing BODY with FORM.
+MORE-FORMS are used when FORM is unsuitable (for example some
+implementations cannot associate errors with atoms). MORE-FORMS should
+be forms containing FORM."
+  #-sbcl (declare (ignore form more-forms))
+  #+sbcl `(sb-ext:with-current-source-form (,form ,@more-forms) ,@body)
+  #-sbcl `(progn ,@body))
 
 ;;;; ----------------------------------------------------------------------
 
